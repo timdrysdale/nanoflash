@@ -201,7 +201,7 @@ void loop() {
 
     // reporting
     if (do_report) {
-        report_cal();
+        report();
         do_report = false;
       }
 }
@@ -214,6 +214,13 @@ StateType readSerialJSON(StateType SmState){
     
     Serial.readBytesUntil(10, command, COMMAND_SIZE);
     deserializeJson(doc, command);
+
+    const char* get = doc["get"];
+    
+    if(strcmp(get, "cal")==0) {
+      report_cal();
+      return SmState; // force {"get":cal"} to be a stand-alone command that can't be combined with set
+    }
     
     const char* set = doc["set"];
 
@@ -233,7 +240,10 @@ StateType readSerialJSON(StateType SmState){
   
  } 
 
-
+void report(){
+  Serial.println("{\"some\":\"data\"}");
+  }
+  
 void report_cal(){
   Serial.print("{\"secure\":");
   Serial.print(cal.secure);
