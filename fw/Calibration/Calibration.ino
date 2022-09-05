@@ -48,7 +48,6 @@ Calibration cal;
 // call it "cal_store".
 FlashStorage(cal_store, Calibration);
 
-
 // Timer setup for reporting
 bool do_report;
 float report_interval = 500; //ms, for timer interrupt
@@ -57,14 +56,6 @@ float report_interval = 500; //ms, for timer interrupt
 #define CPU_HZ 48000000
 #define TIMER_PRESCALER_DIV 1024
 float timer_interrupt_freq = 1000.0/report_interval;
-
-// cal function prototypes
-
-bool cal_is_secure();
-bool cal_is_valid();
-void startTimer(int);
-void report();
-void cal_set_secret(const char *);
 
 /**
  * Defines the valid states for the state machine
@@ -86,6 +77,15 @@ void Sm_State_SetSecret(void);
 void Sm_State_SetCal(void);
 void Sm_State_Standby(void);
 void Sm_State_LoadCal(void);
+
+// cal function prototypes (here because readSerialJSON has to come after StateType definition)
+bool cal_is_secure();
+bool cal_is_valid();
+void startTimer(int);
+void report_insecure();
+void cal_set_secret(const char *);
+void cal_set_values_insecure(StaticJsonDocument<COMMAND_SIZE>);
+StateType readSerialJSON(StateType); //has to come after type definition
 
 /**
  * Type definition used to define the state
@@ -201,13 +201,10 @@ void loop() {
 
     // reporting
     if (do_report) {
-        report();
+        report_insecure();
         do_report = false;
       }
 }
-
-
-
 
 
 
@@ -222,70 +219,22 @@ StateType readSerialJSON(StateType SmState){
 
     if(strcmp(set, "secret")==0)
     {
-  
         const char* secret = doc["to"]; 
-
         cal_set_secret(secret); // this function can be safely called many times because it ignores all but the first non-empty secret 
-   } 
+    } 
     else if(strcmp(set, "cal")==0)
     {
-
-      cal = cal_store.read();
-
-      if (!cal.secure) {
-        Serial.println("{\"error\":\"cal secret not set\"}");
-        return SmState; // don't set values before setting authorisation (prevent rogue writes)
-      }
-      const char* secret =  doc["auth"];
-
-      
-      if (!(strcmp(cal.secret, secret)==0)) {
-        Serial.print("{\"error\":\"wrong secret\",");
-        Serial.print("\"want\":\"");
-        Serial.print(cal.secret); // do NOT do this in production! 
-        Serial.print("\",\"have\":\"");
-        Serial.print(secret);
-        Serial.println("\",\"warning\":\"you are revealing secrets - do not release this code into production\"}");
-          return SmState; // don't set values if auth code does not match secret
-        } 
-
-      JsonArray values = doc["to"];
-
-      if (values.size() != SCALE_FACTOR_LEN) { 
-        Serial.print("{\"error\":\"wrong number of values in cal array\",");
-        Serial.print("\"want\":");
-        Serial.print(SCALE_FACTOR_LEN);
-        Serial.print(",\"have\":");
-        Serial.print(values.size());
-        Serial.println("}");
-        return SmState; // don't set cal values if wrong number 
-        } //size ok
-        
-        Serial.print("{\"log\":\"cal\",\"is\":\"ok\",\"values\":[");
-        for (int i=0; i<SCALE_FACTOR_LEN; i++) {
-            cal.scale_factor[i]= values[i];
-            Serial.print(cal.scale_factor[i]);
-            if (i<(SCALE_FACTOR_LEN-1)){
-            Serial.print(",");
-            } else
-            Serial.println("]}");
-          } // for
-          
-        //cal.scale_factor = values;
-        
-        cal.valid = true;
-        cal.writes -= 1;
-        cal_store.write(cal);
-           
-        
-     } // do cal
+     cal_set_values_insecure(doc);
+    } 
     
-  }
-      return SmState;     //return whatever state it changed to or maintain the state.
+  } // serial available
+  
+  return SmState;     //return whatever state it changed to or maintain the state.
+  
  } 
 
 
-void report(){
+void report_insecure(){
   Serial.print("{\"secure\":");
   Serial.print(cal.secure);
   Serial.print(",\"valid\":");
@@ -338,14 +287,67 @@ void cal_set_secret(const char *secret){
   
     cal = cal_store.read();
     
-    if (!cal.secure){ // only set secret once
-
+    if (cal.secure){ // only set secret once
+       Serial.println("{\"error\":\"secret already set\"}");
+    } else {
         strncpy(cal.secret, secret, (sizeof cal.secret) - 1);
         cal.secure = true;
         cal_store.write(cal);
+        Serial.println("{\"log\":\"secret\",\"is\":\"set\"}"); 
       }
   }
 
+// set the calibration values
+void cal_set_values_insecure(StaticJsonDocument<COMMAND_SIZE> doc){
+  
+      cal = cal_store.read();
+
+      if (!cal.secure) {
+        Serial.println("{\"error\":\"cal secret not set\"}");
+        return; // don't set values before setting authorisation (prevent rogue writes)
+      }
+      const char* secret =  doc["auth"];
+
+      
+      if (!(strcmp(cal.secret, secret)==0)) {
+        Serial.print("{\"error\":\"wrong secret\",");
+        Serial.print("\"want\":\"");
+        Serial.print(cal.secret); // do NOT do this in production! 
+        Serial.print("\",\"have\":\"");
+        Serial.print(secret);
+        Serial.println("\",\"warning\":\"you are revealing secrets - do not release this code into production\"}");
+          return; // don't set values if auth code does not match secret
+        } 
+
+      JsonArray values = doc["to"];
+
+      if (values.size() != SCALE_FACTOR_LEN) { 
+        Serial.print("{\"error\":\"wrong number of values in cal array\",");
+        Serial.print("\"want\":");
+        Serial.print(SCALE_FACTOR_LEN);
+        Serial.print(",\"have\":");
+        Serial.print(values.size());
+        Serial.println("}");
+        return; // don't set cal values if wrong number 
+        } //size ok
+        
+        Serial.print("{\"log\":\"cal\",\"is\":\"ok\",\"values\":[");
+        for (int i=0; i<SCALE_FACTOR_LEN; i++) {
+            cal.scale_factor[i]= values[i];
+            Serial.print(cal.scale_factor[i]);
+            if (i<(SCALE_FACTOR_LEN-1)){
+            Serial.print(",");
+            } else
+            Serial.println("]}");
+          } // for
+          
+        //cal.scale_factor = values;
+        
+        cal.valid = true;
+        cal.writes -= 1;
+        cal_store.write(cal);
+}
+        
 
 bool load_cal(){
   
