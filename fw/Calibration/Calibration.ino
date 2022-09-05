@@ -245,7 +245,7 @@ void report(){
   }
   
 void report_cal(){
-  Serial.print("{\"secure\":");
+  Serial.print("{\"report\":\"cal\",\"secure\":");
   Serial.print(cal.secure);
   Serial.print(",\"valid\":");
   Serial.print(cal.valid);

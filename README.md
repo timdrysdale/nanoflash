@@ -14,7 +14,7 @@ We want to store calibration data on a nano IOT 33. It is proposed to provide tw
 
 Other protections include:
 
-- Enforce a maximum of 100 permissable writes by default, as back up protection against chip damage in the case that a sysadmin accidentally makes a system accessible to users before setting the authorisation code. Do not permit the number of writes to be set higher than 100, only lower.
+- Enforce a maximum of N permissable writes by default, as back up protection against chip damage in the case that a sysadmin accidentally makes a system accessible to users before setting the authorisation code. A good value for N might be 20?
 
 
 Note that writing new firmware to the nano IOT uses the Flash storage, so a solution that modified the firmware source code and required a recompile does not offer any lifetime preservation over this approach, and is probably worse (rewrites more of the memory).
@@ -59,6 +59,7 @@ An alternative strategy is to permit an initial usage of the write command, whic
 {"set":"cal","to":[1,2,3,4],"auth":"foo"} // should fail with {"error":"wrong number of values in cal array","want":7,"have":4}
 {"get":"cal"} // should give last good cal details
 {"set":"cal","to":[2.0,2.1,2.2,2.3,2.4,2.5,2.6],"auth":"foo"}  //should work
+{"get":"cal"}
 {"set":"cal","to":[3.0,3.1,3.2,3.3,3.4,3.5,3.6],"auth":"foo"}  // since MAX_FLASH_WRITES is set to 3, this fourth write won't work
 {"get":"cal"} // should give last good cal details
 ```
@@ -76,10 +77,4 @@ A successful cal update returns something in this format:
 
 You unplug the arduino, and plug it in again, and the calibration data is retained.
 
-
-### Production
-
-There's no need to report the cal routinely, there is a command to get the current calibration state so you can check what values are in use.
-
-A sensible write limit is probably 20, which is probably about 5x more than we'd need for setting up a new experiment, even allowing for a few go-arounds.
 
