@@ -75,4 +75,7 @@ You unplug the arduino, and plug it in again, and the calibration data is retain
 
 ### Production
 
-There's probably no need to report the cal routinely, but it would be good to add a command to return the current calibration values.
+There's no need to report the cal routinely, there is a command to get the current calibration state so you can check what values are in use.
+
+A sensible write limit is probably 20, which is probably about 5x more than we'd need for setting up a new experiment, even allowing for a few go-arounds.
+
