@@ -44,3 +44,15 @@ Authorisation implies checking incoming commands meet some sort of criteria, but
 An alternative strategy is to permit an initial usage of the write command, which should/must set the credential, and potentially the maximum number of writes. This can be issued by the sysadmin before making the system live.
 
 
+### Commands
+
+```
+{"set":"secret","to":"foo"}   //should work
+{"set":"secret","to":"bar"}   // should be ignored
+{"set":"cal","to":[0.0,0.1,0.2,0.3,0.4,0.5,0.6],"auth":"foo"}  //should work
+{"set":"cal","to":[9.1,9.2,9.3,9.4,9.5,9.6],"auth":"bar"}  // should be ignored with {"error":"wrong secret","want":"foo","have":"bar","warning":"you are revealing secrets - do not release this code into production"}
+{"set":"cal","to":[1,2,3,4],"auth":"foo"} // should fail with {"error":"wrong number of values in cal array","want":7,"have":4}
+
+```
+
+

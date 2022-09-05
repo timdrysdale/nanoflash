@@ -10,13 +10,15 @@
 #include <FlashStorage.h>
 
 //JSON serialization
-#define COMMAND_SIZE 64  //originally 64
+#define COMMAND_SIZE 192  //https://arduinojson.org/v6/assistant
 StaticJsonDocument<COMMAND_SIZE> doc;
 char command[COMMAND_SIZE];
 
 #define FLASH_WRITES_MAX 20
 #define SECRET_LEN_MAX 99
 #define SCALE_FACTOR_LEN 7
+const size_t SCALE_FACTOR_CAPACITY = JSON_ARRAY_SIZE(SCALE_FACTOR_LEN);
+StaticJsonDocument<SCALE_FACTOR_CAPACITY> scale_factors;
 
 // calibration value indices in cal array
 #define LOAD_CELL 0
@@ -24,7 +26,7 @@ char command[COMMAND_SIZE];
 #define MEMBER_2 2
 #define MEMBER_3 3
 #define MEMBER_4 4
-#define MEMBER_5 6
+#define MEMBER_5 5
 #define MEMBER_6 6
 
 // Create a structure that contains is big enough to contain a name
@@ -47,9 +49,22 @@ Calibration cal;
 FlashStorage(cal_store, Calibration);
 
 
-// DELETE
-// put cal values in array and use the #define'd indices above to make cal set/get code safer
-// volatile float scale_factor[7]; // our working copy of the calibration array so that code does not need to know about flashstorage object
+// Timer setup for reporting
+bool do_report;
+float report_interval = 500; //ms, for timer interrupt
+
+// Timer (specific to nano IOT 33)
+#define CPU_HZ 48000000
+#define TIMER_PRESCALER_DIV 1024
+float timer_interrupt_freq = 1000.0/report_interval;
+
+// cal function prototypes
+
+bool cal_is_secure();
+bool cal_is_valid();
+void startTimer(int);
+void report();
+void cal_set_secret(const char *);
 
 /**
  * Defines the valid states for the state machine
@@ -171,6 +186,7 @@ void Sm_Run(void)
 
 void setup() {
 
+  startTimer(timer_interrupt_freq);   //setup and start the timer interrupt functions for PID calculations
 
   //Serial communication for sending data -> RPi -> Server
   Serial.begin(57600);
@@ -182,7 +198,12 @@ void setup() {
 
 void loop() {
     Sm_Run();
-    report();
+
+    // reporting
+    if (do_report) {
+        report();
+        do_report = false;
+      }
 }
 
 
@@ -209,19 +230,55 @@ StateType readSerialJSON(StateType SmState){
     else if(strcmp(set, "cal")==0)
     {
 
-      
-      const char* values = doc["to"];
+      cal = cal_store.read();
 
-     
-        
-    }  
-    else if(strcmp(set, "report")==0)
-    {
-    
-      report();
+      if (!cal.secure) {
+        Serial.println("{\"error\":\"cal secret not set\"}");
+        return SmState; // don't set values before setting authorisation (prevent rogue writes)
+      }
+      const char* secret =  doc["auth"];
+
       
-    }  
-    
+      if (!(strcmp(cal.secret, secret)==0)) {
+        Serial.print("{\"error\":\"wrong secret\",");
+        Serial.print("\"want\":\"");
+        Serial.print(cal.secret); // do NOT do this in production! 
+        Serial.print("\",\"have\":\"");
+        Serial.print(secret);
+        Serial.println("\",\"warning\":\"you are revealing secrets - do not release this code into production\"}");
+          return SmState; // don't set values if auth code does not match secret
+        } 
+
+      JsonArray values = doc["to"];
+
+      if (values.size() != SCALE_FACTOR_LEN) { 
+        Serial.print("{\"error\":\"wrong number of values in cal array\",");
+        Serial.print("\"want\":");
+        Serial.print(SCALE_FACTOR_LEN);
+        Serial.print(",\"have\":");
+        Serial.print(values.size());
+        Serial.println("}");
+        return SmState; // don't set cal values if wrong number 
+        } //size ok
+        
+        Serial.print("{\"log\":\"cal\",\"is\":\"ok\",\"values\":[");
+        for (int i=0; i<SCALE_FACTOR_LEN; i++) {
+            cal.scale_factor[i]= values[i];
+            Serial.print(cal.scale_factor[i]);
+            if (i<(SCALE_FACTOR_LEN-1)){
+            Serial.print(",");
+            } else
+            Serial.println("]}");
+          } // for
+          
+        //cal.scale_factor = values;
+        
+        cal.valid = true;
+        cal.writes -= 1;
+        cal_store.write(cal);
+           
+        
+     } // do cal
     
   }
       return SmState;     //return whatever state it changed to or maintain the state.
@@ -296,3 +353,68 @@ bool load_cal(){
     
   }
  
+//This function is run on a timer interrupt defined by PIDInterval/timer_interrupt_freq.
+void TimerInterrupt(void) {
+   do_report = true;
+}
+
+//===================================================================================
+//======================TIMER INTERRUPT FUNCTIONS====================================
+//      FROM https://github.com/nebs/arduino-zero-timer-demo/
+//===================================================================================
+
+void setTimerFrequencyHz(int frequencyHz) {
+  int compareValue = (CPU_HZ / (TIMER_PRESCALER_DIV * frequencyHz)) - 1;
+  TcCount16* TC = (TcCount16*) TC3;
+  // Make sure the count is in a proportional position to where it was
+  // to prevent any jitter or disconnect when changing the compare value.
+  TC->COUNT.reg = map(TC->COUNT.reg, 0, TC->CC[0].reg, 0, compareValue);
+  TC->CC[0].reg = compareValue;
+  while (TC->STATUS.bit.SYNCBUSY == 1);
+}
+
+/*
+This is a slightly modified version of the timer setup found at:
+https://github.com/maxbader/arduino_tools
+ */
+void startTimer(int frequencyHz) {
+  REG_GCLK_CLKCTRL = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID (GCM_TCC2_TC3)) ;
+  while ( GCLK->STATUS.bit.SYNCBUSY == 1 );
+
+  TcCount16* TC = (TcCount16*) TC3;
+
+  TC->CTRLA.reg &= ~TC_CTRLA_ENABLE;
+
+  // Use the 16-bit timer
+  TC->CTRLA.reg |= TC_CTRLA_MODE_COUNT16;
+  while (TC->STATUS.bit.SYNCBUSY == 1);
+
+  // Use match mode so that the timer counter resets when the count matches the compare register
+  TC->CTRLA.reg |= TC_CTRLA_WAVEGEN_MFRQ;
+  while (TC->STATUS.bit.SYNCBUSY == 1);
+
+  // Set prescaler to 1024
+  TC->CTRLA.reg |= TC_CTRLA_PRESCALER_DIV1024;
+  while (TC->STATUS.bit.SYNCBUSY == 1);
+
+  setTimerFrequencyHz(frequencyHz);
+
+  // Enable the compare interrupt
+  TC->INTENSET.reg = 0;
+  TC->INTENSET.bit.MC0 = 1;
+
+  NVIC_EnableIRQ(TC3_IRQn);
+
+  TC->CTRLA.reg |= TC_CTRLA_ENABLE;
+  while (TC->STATUS.bit.SYNCBUSY == 1);
+}
+
+void TC3_Handler() {
+  TcCount16* TC = (TcCount16*) TC3;
+  // If this interrupt is due to the compare register matching the timer count
+  // we run the TimerInterrupt() function.
+  if (TC->INTFLAG.bit.MC0 == 1) {
+    TC->INTFLAG.bit.MC0 = 1;
+    TimerInterrupt();           //THE FUNCTION TO RUN ON THE TIMER
+  }
+}
