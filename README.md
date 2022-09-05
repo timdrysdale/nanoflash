@@ -50,9 +50,21 @@ An alternative strategy is to permit an initial usage of the write command, whic
 {"set":"secret","to":"foo"}   //should work
 {"set":"secret","to":"bar"}   // should be ignored
 {"set":"cal","to":[0.0,0.1,0.2,0.3,0.4,0.5,0.6],"auth":"foo"}  //should work
-{"set":"cal","to":[9.1,9.2,9.3,9.4,9.5,9.6],"auth":"bar"}  // should be ignored with {"error":"wrong secret","want":"foo","have":"bar","warning":"you are revealing secrets - do not release this code into production"}
+{"set":"cal","to":[9.1,9.2,9.3,9.4,9.5,9.6],"auth":"bar"}  // should be ignored with {"error":"wrong secret"}
+{"set":"cal","to":[1.0,1.1,1.2,1.3,1.4,1.5,1.6],"auth":"foo"}  //should work
 {"set":"cal","to":[1,2,3,4],"auth":"foo"} // should fail with {"error":"wrong number of values in cal array","want":7,"have":4}
+{"set":"cal","to":[2.0,2.1,2.2,2.3,2.4,2.5,2.6],"auth":"foo"}  //should work
+{"set":"cal","to":[3.0,3.1,3.2,3.3,3.4,3.5,3.6],"auth":"foo"}  // since MAX_FLASH_WRITES is set to 3, this fourth write won't work
+```
 
+A successful secret setting returns
+```
+{"log":"secret","is":"set"}
+```
+
+A successful cal update returns something in this format: 
+```
+{"log":"cal","is":"ok","values":[0.00,0.10,0.20,0.30,0.40,0.50,0.60],"writes_remaining":2}
 ```
 
 

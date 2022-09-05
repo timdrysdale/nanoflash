@@ -14,7 +14,7 @@
 StaticJsonDocument<COMMAND_SIZE> doc;
 char command[COMMAND_SIZE];
 
-#define FLASH_WRITES_MAX 20
+#define FLASH_WRITES_MAX 3
 #define SECRET_LEN_MAX 99
 #define SCALE_FACTOR_LEN 7
 const size_t SCALE_FACTOR_CAPACITY = JSON_ARRAY_SIZE(SCALE_FACTOR_LEN);
@@ -50,7 +50,7 @@ FlashStorage(cal_store, Calibration);
 
 // Timer setup for reporting
 bool do_report;
-float report_interval = 500; //ms, for timer interrupt
+float report_interval = 3000; //ms, for timer interrupt
 
 // Timer (specific to nano IOT 33)
 #define CPU_HZ 48000000
@@ -82,9 +82,9 @@ void Sm_State_LoadCal(void);
 bool cal_is_secure();
 bool cal_is_valid();
 void startTimer(int);
-void report_insecure();
+void report_cal();
 void cal_set_secret(const char *);
-void cal_set_values_insecure(StaticJsonDocument<COMMAND_SIZE>);
+void cal_set_values(StaticJsonDocument<COMMAND_SIZE>);
 StateType readSerialJSON(StateType); //has to come after type definition
 
 /**
@@ -201,7 +201,7 @@ void loop() {
 
     // reporting
     if (do_report) {
-        report_insecure();
+        report_cal();
         do_report = false;
       }
 }
@@ -224,7 +224,7 @@ StateType readSerialJSON(StateType SmState){
     } 
     else if(strcmp(set, "cal")==0)
     {
-     cal_set_values_insecure(doc);
+     cal_set_values(doc);
     } 
     
   } // serial available
@@ -234,15 +234,13 @@ StateType readSerialJSON(StateType SmState){
  } 
 
 
-void report_insecure(){
+void report_cal(){
   Serial.print("{\"secure\":");
   Serial.print(cal.secure);
   Serial.print(",\"valid\":");
   Serial.print(cal.valid);
   Serial.print(",\"writes_left\":");
   Serial.print(cal.writes);  
-  Serial.print(",\"secret\":"); //do NOT reveal secret over serial comms in production - for testing/demo only.
-  Serial.print(cal.secret); 
   Serial.print(",\"sf_load\":"); 
   Serial.print(cal.scale_factor[LOAD_CELL]);
   Serial.print(",\"sf_m1\":"); 
@@ -292,13 +290,14 @@ void cal_set_secret(const char *secret){
     } else {
         strncpy(cal.secret, secret, (sizeof cal.secret) - 1);
         cal.secure = true;
+        cal.writes = FLASH_WRITES_MAX;
         cal_store.write(cal);
         Serial.println("{\"log\":\"secret\",\"is\":\"set\"}"); 
       }
   }
 
 // set the calibration values
-void cal_set_values_insecure(StaticJsonDocument<COMMAND_SIZE> doc){
+void cal_set_values(StaticJsonDocument<COMMAND_SIZE> doc){
   
       cal = cal_store.read();
 
@@ -306,16 +305,17 @@ void cal_set_values_insecure(StaticJsonDocument<COMMAND_SIZE> doc){
         Serial.println("{\"error\":\"cal secret not set\"}");
         return; // don't set values before setting authorisation (prevent rogue writes)
       }
+
+      if (cal.writes <= 0) {
+        Serial.println("{\"error\":\"no more cal writes permitted - reflash firmware to reset counter\"}");
+        return; // prevent writes if remaining write count has reached zero
+      }
+      
       const char* secret =  doc["auth"];
 
       
       if (!(strcmp(cal.secret, secret)==0)) {
-        Serial.print("{\"error\":\"wrong secret\",");
-        Serial.print("\"want\":\"");
-        Serial.print(cal.secret); // do NOT do this in production! 
-        Serial.print("\",\"have\":\"");
-        Serial.print(secret);
-        Serial.println("\",\"warning\":\"you are revealing secrets - do not release this code into production\"}");
+          Serial.println("{\"error\":\"wrong secret\"}");
           return; // don't set values if auth code does not match secret
         } 
 
@@ -330,21 +330,25 @@ void cal_set_values_insecure(StaticJsonDocument<COMMAND_SIZE> doc){
         Serial.println("}");
         return; // don't set cal values if wrong number 
         } //size ok
-        
+
+        cal.writes -= 1;
+        cal.valid = true;
+                        
         Serial.print("{\"log\":\"cal\",\"is\":\"ok\",\"values\":[");
         for (int i=0; i<SCALE_FACTOR_LEN; i++) {
             cal.scale_factor[i]= values[i];
             Serial.print(cal.scale_factor[i]);
             if (i<(SCALE_FACTOR_LEN-1)){
-            Serial.print(",");
-            } else
-            Serial.println("]}");
+               Serial.print(",");
+            } 
+            else 
+            {
+               Serial.print("],\"writes_remaining\":");
+               Serial.print(cal.writes);
+               Serial.println("}");
+            }
           } // for
-          
-        //cal.scale_factor = values;
         
-        cal.valid = true;
-        cal.writes -= 1;
         cal_store.write(cal);
 }
         
