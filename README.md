@@ -1,6 +1,10 @@
 # nanoflash
 Flashstorage demo for the nano IOT 33 - this might be useful for storing remote lab experiment calibration data 
 
+## Installation
+
+You need to install the [FlashStorage library](https://github.com/cmaglie/FlashStorage) for the SAMD21. It shows up for me as "FlashStorage, various authors" in the library manager. I based the usage of a object on this [example](https://github.com/cmaglie/FlashStorage/blob/master/examples/StoreNameAndSurname/StoreNameAndSurname.ino) in the library repo.
+
 ## Proposed approach
 
 We want to store calibration data on a nano IOT 33. It is proposed to provide two commands:
